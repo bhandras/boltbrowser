@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/boltdb/bolt"
+	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/nsf/termbox-go"
 )
 
@@ -15,7 +16,7 @@ var ProgramName = "boltbrowser"
 var VersionNum = 2.0
 
 var databaseFiles []string
-var db *bolt.DB
+var db kvdb.Backend
 var memBolt *BoltDB
 
 var currentFilename string
@@ -114,7 +115,12 @@ func main() {
 
 	for _, databaseFile := range databaseFiles {
 		currentFilename = databaseFile
-		db, err = bolt.Open(databaseFile, 0600, &bolt.Options{Timeout: AppArgs.DBOpenTimeout})
+
+		db, err = kvdb.GetBoltBackend(&kvdb.BoltBackendConfig{
+			DBFileName:  databaseFile,
+			DBTimeout:   AppArgs.DBOpenTimeout,
+			AutoCompact: false,
+		})
 		if err == bolt.ErrTimeout {
 			termbox.Close()
 			fmt.Printf("File %s is locked. Make sure it's not used by another app and try again\n", databaseFile)

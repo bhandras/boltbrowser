@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/boltdb/bolt"
+	"github.com/lightningnetwork/lnd/kvdb"
 )
 
 /*
@@ -267,18 +267,19 @@ func (bd *BoltDB) syncOpenBuckets(shadow *BoltDB) {
 func (bd *BoltDB) refreshDatabase() *BoltDB {
 	// Reload the database into memBolt
 	memBolt = new(BoltDB)
-	db.View(func(tx *bolt.Tx) error {
-		return tx.ForEach(func(nm []byte, b *bolt.Bucket) error {
+	kvdb.View(db, func(tx kvdb.RTx) error {
+		return tx.ForEachBucket(func(key []byte) error {
+			b := tx.ReadBucket(key)
 			bb, err := readBucket(b)
 			if err == nil {
-				bb.name = string(nm)
+				bb.name = string(key)
 				bb.expanded = false
 				memBolt.buckets = append(memBolt.buckets, *bb)
 				return nil
 			}
 			return err
 		})
-	})
+	}, func() {})
 	return memBolt
 }
 
@@ -392,43 +393,45 @@ func deleteKey(path []string) error {
 	if AppArgs.ReadOnly {
 		return errors.New("DB is in Read-Only Mode")
 	}
-	err := db.Update(func(tx *bolt.Tx) error {
+	err := kvdb.Update(db, func(tx kvdb.RwTx) error {
 		// len(b.path)-1 is the key we need to delete,
 		// the rest are buckets leading to that key
 		if len(path) == 1 {
 			// Deleting a root bucket
-			return tx.DeleteBucket([]byte(path[0]))
+			return tx.DeleteTopLevelBucket([]byte(path[0]))
 		}
-		b := tx.Bucket([]byte(path[0]))
-		if b != nil {
-			if len(path) > 1 {
-				for i := range path[1 : len(path)-1] {
-					b = b.Bucket([]byte(path[i+1]))
-					if b == nil {
-						return errors.New("deleteKey: Invalid Path")
-					}
+
+		b := tx.ReadWriteBucket([]byte(path[0]))
+		if b == nil {
+			return errors.New("deleteKey: Invalid Path")
+		}
+
+		if len(path) > 1 {
+			for i := range path[1 : len(path)-1] {
+				b = b.NestedReadWriteBucket([]byte(path[i+1]))
+				if b == nil {
+					return errors.New("deleteKey: Invalid Path")
 				}
 			}
-			// Now delete the last key in the path
-			var err error
-			if deleteBkt := b.Bucket([]byte(path[len(path)-1])); deleteBkt == nil {
-				// Must be a pair
-				err = b.Delete([]byte(path[len(path)-1]))
-			} else {
-				err = b.DeleteBucket([]byte(path[len(path)-1]))
-			}
-			return err
 		}
-		return errors.New("deleteKey: Invalid Path")
-	})
+		// Now delete the last key in the path
+		var err error
+		if deleteBkt := b.NestedReadWriteBucket([]byte(path[len(path)-1])); deleteBkt == nil {
+			// Must be a pair
+			err = b.Delete([]byte(path[len(path)-1]))
+		} else {
+			err = b.DeleteNestedBucket([]byte(path[len(path)-1]))
+		}
+		return err
+	}, func() {})
 	return err
 }
 
-func readBucket(b *bolt.Bucket) (*BoltBucket, error) {
+func readBucket(b kvdb.RBucket) (*BoltBucket, error) {
 	bb := new(BoltBucket)
 	b.ForEach(func(k, v []byte) error {
 		if v == nil {
-			tb, err := readBucket(b.Bucket(k))
+			tb, err := readBucket(b.NestedReadBucket(k))
 			tb.parent = bb
 			if err == nil {
 				tb.name = string(k)
@@ -450,14 +453,14 @@ func renameBucket(path []string, name string) error {
 		return nil
 	}
 	var bb *BoltBucket // For caching the current bucket
-	err := db.View(func(tx *bolt.Tx) error {
+	err := kvdb.View(db, func(tx kvdb.RTx) error {
 		// len(b.path)-1 is the key we need to delete,
 		// the rest are buckets leading to that key
-		b := tx.Bucket([]byte(path[0]))
+		b := tx.ReadBucket([]byte(path[0]))
 		if b != nil {
 			if len(path) > 1 {
 				for i := range path[1:len(path)] {
-					b = b.Bucket([]byte(path[i+1]))
+					b = b.NestedReadBucket([]byte(path[i+1]))
 					if b == nil {
 						return errors.New("renameBucket: Invalid Path")
 					}
@@ -473,7 +476,7 @@ func renameBucket(path []string, name string) error {
 			return errors.New("renameBucket: Invalid Bucket")
 		}
 		return nil
-	})
+	}, func() {})
 	if err != nil {
 		return err
 	}
@@ -500,31 +503,34 @@ func updatePairKey(path []string, k string) error {
 	if AppArgs.ReadOnly {
 		return errors.New("DB is in Read-Only Mode")
 	}
-	err := db.Update(func(tx *bolt.Tx) error {
+	err := kvdb.Update(db, func(tx kvdb.RwTx) error {
 		// len(b.path)-1 is the key for the pair we're updating,
 		// the rest are buckets leading to that key
-		b := tx.Bucket([]byte(path[0]))
-		if b != nil {
-			if len(path) > 0 {
-				for i := range path[1 : len(path)-1] {
-					b = b.Bucket([]byte(path[i+1]))
-					if b == nil {
-						return errors.New("updatePairValue: Invalid Path")
-					}
+		b := tx.ReadWriteBucket([]byte(path[0]))
+		if b == nil {
+			return errors.New("updatePairValue: Invalid Path")
+		}
+
+		if len(path) > 0 {
+			for i := range path[1 : len(path)-1] {
+				b = b.NestedReadWriteBucket([]byte(path[i+1]))
+				if b == nil {
+					return errors.New("updatePairValue: Invalid Path")
 				}
 			}
-			bk := []byte(path[len(path)-1])
-			v := b.Get(bk)
-			err := b.Delete(bk)
-			if err == nil {
-				// Old pair has been deleted, now add the new one
-				err = b.Put([]byte(k), v)
-			}
-			// Now update the last key in the path
-			return err
 		}
-		return errors.New("updatePairValue: Invalid Path")
-	})
+
+		bk := []byte(path[len(path)-1])
+		v := b.Get(bk)
+
+		err := b.Delete(bk)
+		if err == nil {
+			// Old pair has been deleted, now add the new one
+			err = b.Put([]byte(k), v)
+		}
+		// Now update the last key in the path
+		return err
+	}, func() {})
 	return err
 }
 
@@ -532,14 +538,14 @@ func updatePairValue(path []string, v string) error {
 	if AppArgs.ReadOnly {
 		return errors.New("DB is in Read-Only Mode")
 	}
-	err := db.Update(func(tx *bolt.Tx) error {
+	err := kvdb.Update(db, func(tx kvdb.RwTx) error {
 		// len(b.GetPath())-1 is the key for the pair we're updating,
 		// the rest are buckets leading to that key
-		b := tx.Bucket([]byte(path[0]))
+		b := tx.ReadWriteBucket([]byte(path[0]))
 		if b != nil {
 			if len(path) > 0 {
 				for i := range path[1 : len(path)-1] {
-					b = b.Bucket([]byte(path[i+1]))
+					b = b.NestedReadWriteBucket([]byte(path[i+1]))
 					if b == nil {
 						return errors.New("updatePairValue: Invalid Path")
 					}
@@ -550,7 +556,7 @@ func updatePairValue(path []string, v string) error {
 			return err
 		}
 		return errors.New("updatePairValue: Invalid Path")
-	})
+	}, func() {})
 	return err
 }
 
@@ -559,38 +565,38 @@ func insertBucket(path []string, n string) error {
 		return errors.New("DB is in Read-Only Mode")
 	}
 	// Inserts a new bucket named 'n' at 'path'
-	err := db.Update(func(tx *bolt.Tx) error {
+	err := kvdb.Update(db, func(tx kvdb.RwTx) error {
 		if len(path) == 0 {
 			// insert at root
-			_, err := tx.CreateBucket([]byte(n))
+			_, err := tx.CreateTopLevelBucket([]byte(n))
 			if err != nil {
 				return fmt.Errorf("insertBucket: %s", err)
 			}
 		} else {
 			rootBucket, path := path[0], path[1:]
-			b := tx.Bucket([]byte(rootBucket))
-			if b != nil {
-				for len(path) > 0 {
-					tstBucket := ""
-					tstBucket, path = path[0], path[1:]
-					nB := b.Bucket([]byte(tstBucket))
-					if nB == nil {
-						// Not a bucket, if we're out of path, just move on
-						if len(path) != 0 {
-							// Out of path, error
-							return errors.New("insertBucket: Invalid Path 1")
-						}
-					} else {
-						b = nB
-					}
-				}
-				_, err := b.CreateBucket([]byte(n))
-				return err
+			b := tx.ReadWriteBucket([]byte(rootBucket))
+			if b == nil {
+				return fmt.Errorf("insertBucket: Invalid Path %s", rootBucket)
 			}
-			return fmt.Errorf("insertBucket: Invalid Path %s", rootBucket)
+			for len(path) > 0 {
+				tstBucket := ""
+				tstBucket, path = path[0], path[1:]
+				nB := b.NestedReadWriteBucket([]byte(tstBucket))
+				if nB == nil {
+					// Not a bucket, if we're out of path, just move on
+					if len(path) != 0 {
+						// Out of path, error
+						return errors.New("insertBucket: Invalid Path 1")
+					}
+				} else {
+					b = nB
+				}
+			}
+			_, err := b.CreateBucket([]byte(n))
+			return err
 		}
 		return nil
-	})
+	}, func() {})
 	return err
 }
 
@@ -599,17 +605,17 @@ func insertPair(path []string, k string, v string) error {
 		return errors.New("DB is in Read-Only Mode")
 	}
 	// Insert a new pair k => v at path
-	err := db.Update(func(tx *bolt.Tx) error {
+	err := kvdb.Update(db, func(tx kvdb.RwTx) error {
 		if len(path) == 0 {
 			// We cannot insert a pair at root
 			return errors.New("insertPair: Cannot insert pair at root")
 		}
 		var err error
-		b := tx.Bucket([]byte(path[0]))
+		b := tx.ReadWriteBucket([]byte(path[0]))
 		if b != nil {
 			if len(path) > 0 {
 				for i := 1; i < len(path); i++ {
-					b = b.Bucket([]byte(path[i]))
+					b = b.NestedReadWriteBucket([]byte(path[i]))
 					if b == nil {
 						return fmt.Errorf("insertPair: %s", err)
 					}
@@ -621,41 +627,41 @@ func insertPair(path []string, k string, v string) error {
 			}
 		}
 		return nil
-	})
+	}, func() {})
 	return err
 }
 
 func exportValue(path []string, fName string) error {
-	return db.View(func(tx *bolt.Tx) error {
+	return kvdb.View(db, func(tx kvdb.RTx) error {
 		// len(b.path)-1 is the key whose value we want to export
 		// the rest are buckets leading to that key
-		b := tx.Bucket([]byte(path[0]))
-		if b != nil {
-			if len(path) > 1 {
-				for i := range path[1 : len(path)-1] {
-					b = b.Bucket([]byte(path[i+1]))
-					if b == nil {
-						return errors.New("exportValue: Invalid Path: " + strings.Join(path, "/"))
-					}
+		b := tx.ReadBucket([]byte(path[0]))
+		if b == nil {
+			return errors.New("exportValue: Invalid Bucket")
+		}
+		if len(path) > 1 {
+			for i := range path[1 : len(path)-1] {
+				b = b.NestedReadBucket([]byte(path[i+1]))
+				if b == nil {
+					return errors.New("exportValue: Invalid Path: " + strings.Join(path, "/"))
 				}
 			}
-			bk := []byte(path[len(path)-1])
-			v := b.Get(bk)
-			return writeToFile(fName, string(v)+"\n", os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
 		}
-		return errors.New("exportValue: Invalid Bucket")
-	})
+		bk := []byte(path[len(path)-1])
+		v := b.Get(bk)
+		return writeToFile(fName, string(v)+"\n", os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
+	}, func() {})
 }
 
 func exportJSON(path []string, fName string) error {
-	return db.View(func(tx *bolt.Tx) error {
+	return kvdb.View(db, func(tx kvdb.RTx) error {
 		// len(b.path)-1 is the key whose value we want to export
 		// the rest are buckets leading to that key
-		b := tx.Bucket([]byte(path[0]))
+		b := tx.ReadBucket([]byte(path[0]))
 		if b != nil {
 			if len(path) > 1 {
 				for i := range path[1 : len(path)-1] {
-					b = b.Bucket([]byte(path[i+1]))
+					b = b.NestedReadBucket([]byte(path[i+1]))
 					if b == nil {
 						return errors.New("exportValue: Invalid Path: " + strings.Join(path, "/"))
 					}
@@ -665,21 +671,21 @@ func exportJSON(path []string, fName string) error {
 			if v := b.Get(bk); v != nil {
 				return writeToFile(fName, "{\""+string(bk)+"\":\""+string(v)+"\"}", os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
 			}
-			if b.Bucket(bk) != nil {
-				return writeToFile(fName, genJSONString(b.Bucket(bk)), os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
+			if b.NestedReadBucket(bk) != nil {
+				return writeToFile(fName, genJSONString(b.NestedReadBucket(bk)), os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
 			}
 			return writeToFile(fName, genJSONString(b), os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
 		}
 		return errors.New("exportValue: Invalid Bucket")
-	})
+	}, func() {})
 }
 
-func genJSONString(b *bolt.Bucket) string {
+func genJSONString(b kvdb.RBucket) string {
 	ret := "{"
 	b.ForEach(func(k, v []byte) error {
 		ret = fmt.Sprintf("%s\"%s\":", ret, string(k))
 		if v == nil {
-			ret = fmt.Sprintf("%s%s,", ret, genJSONString(b.Bucket(k)))
+			ret = fmt.Sprintf("%s%s,", ret, genJSONString(b.NestedReadBucket(k)))
 		} else {
 			ret = fmt.Sprintf("%s\"%s\",", ret, string(v))
 		}
