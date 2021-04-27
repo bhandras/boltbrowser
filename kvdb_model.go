@@ -10,34 +10,34 @@ import (
 )
 
 /*
-BoltDB A Database, basically a collection of buckets
+KeyValueDB a database, basically a collection of buckets
 */
-type BoltDB struct {
-	buckets []BoltBucket
+type KeyValueDB struct {
+	buckets []Bucket
 }
 
 /*
-BoltBucket is just a struct representation of a Bucket in the Bolt DB
+Bucket is just a struct representation of a Bucket in a kvdb DB
 */
-type BoltBucket struct {
+type Bucket struct {
 	name      string
-	pairs     []BoltPair
-	buckets   []BoltBucket
-	parent    *BoltBucket
+	pairs     []KeyValue
+	buckets   []Bucket
+	parent    *Bucket
 	expanded  bool
 	errorFlag bool
 }
 
 /*
-BoltPair is just a struct representation of a Pair in the Bolt DB
+KeyValue is just a struct representation of a Pair in the kvdb DB
 */
-type BoltPair struct {
-	parent *BoltBucket
+type KeyValue struct {
+	parent *Bucket
 	key    string
 	val    string
 }
 
-func (bd *BoltDB) getGenericFromPath(path []string) (*BoltBucket, *BoltPair, error) {
+func (bd *KeyValueDB) getGenericFromPath(path []string) (*Bucket, *KeyValue, error) {
 	// Check if 'path' leads to a pair
 	p, err := bd.getPairFromPath(path)
 	if err == nil {
@@ -52,13 +52,13 @@ func (bd *BoltDB) getGenericFromPath(path []string) (*BoltBucket, *BoltPair, err
 	return nil, nil, errors.New("Invalid Path")
 }
 
-func (bd *BoltDB) getBucketFromPath(path []string) (*BoltBucket, error) {
+func (bd *KeyValueDB) getBucketFromPath(path []string) (*Bucket, error) {
 	if len(path) > 0 {
-		// Find the BoltBucket with a path == path
-		var b *BoltBucket
+		// Find the Bucket with a path == path
+		var b *Bucket
 		var err error
 		// Find the root bucket
-		b, err = memBolt.getBucket(path[0])
+		b, err = memDB.getBucket(path[0])
 		if err != nil {
 			return nil, err
 		}
@@ -75,7 +75,7 @@ func (bd *BoltDB) getBucketFromPath(path []string) (*BoltBucket, error) {
 	return nil, errors.New("Invalid Path")
 }
 
-func (bd *BoltDB) getPairFromPath(path []string) (*BoltPair, error) {
+func (bd *KeyValueDB) getPairFromPath(path []string) (*KeyValue, error) {
 	if len(path) <= 0 {
 		return nil, errors.New("No Path")
 	}
@@ -88,7 +88,7 @@ func (bd *BoltDB) getPairFromPath(path []string) (*BoltPair, error) {
 	return p, err
 }
 
-func (bd *BoltDB) getVisibleItemCount(path []string) (int, error) {
+func (bd *KeyValueDB) getVisibleItemCount(path []string) (int, error) {
 	vis := 0
 	var retErr error
 	if len(path) == 0 {
@@ -123,7 +123,7 @@ func (bd *BoltDB) getVisibleItemCount(path []string) (int, error) {
 	return vis, retErr
 }
 
-func (bd *BoltDB) buildVisiblePathSlice(filter string) ([][]string, error) {
+func (bd *KeyValueDB) buildVisiblePathSlice(filter string) ([][]string, error) {
 	var retSlice [][]string
 	var retErr error
 	// The root path, recurse for root buckets
@@ -139,7 +139,7 @@ func (bd *BoltDB) buildVisiblePathSlice(filter string) ([][]string, error) {
 	return retSlice, retErr
 }
 
-func (bd *BoltDB) isVisiblePath(path []string, filter string) bool {
+func (bd *KeyValueDB) isVisiblePath(path []string, filter string) bool {
 	visPaths, err := bd.buildVisiblePathSlice(filter)
 	if err != nil {
 		return false
@@ -161,7 +161,7 @@ func (bd *BoltDB) isVisiblePath(path []string, filter string) bool {
 	}
 	return false
 }
-func (bd *BoltDB) getPrevVisiblePath(path []string, filter string) []string {
+func (bd *KeyValueDB) getPrevVisiblePath(path []string, filter string) []string {
 	visPaths, err := bd.buildVisiblePathSlice(filter)
 	if path == nil {
 		if len(visPaths) > 0 {
@@ -185,7 +185,7 @@ func (bd *BoltDB) getPrevVisiblePath(path []string, filter string) []string {
 	}
 	return nil
 }
-func (bd *BoltDB) getNextVisiblePath(path []string, filter string) []string {
+func (bd *KeyValueDB) getNextVisiblePath(path []string, filter string) []string {
 	visPaths, err := bd.buildVisiblePathSlice(filter)
 	if path == nil {
 		if len(visPaths) > 0 {
@@ -210,8 +210,8 @@ func (bd *BoltDB) getNextVisiblePath(path []string, filter string) []string {
 	return nil
 }
 
-func (bd *BoltDB) toggleOpenBucket(path []string) error {
-	// Find the BoltBucket with a path == path
+func (bd *KeyValueDB) toggleOpenBucket(path []string) error {
+	// Find the Bucket with a path == path
 	b, err := bd.getBucketFromPath(path)
 	if err == nil {
 		b.expanded = !b.expanded
@@ -219,8 +219,8 @@ func (bd *BoltDB) toggleOpenBucket(path []string) error {
 	return err
 }
 
-func (bd *BoltDB) closeBucket(path []string) error {
-	// Find the BoltBucket with a path == path
+func (bd *KeyValueDB) closeBucket(path []string) error {
+	// Find the Bucket with a path == path
 	b, err := bd.getBucketFromPath(path)
 	if err == nil {
 		b.expanded = false
@@ -228,8 +228,8 @@ func (bd *BoltDB) closeBucket(path []string) error {
 	return err
 }
 
-func (bd *BoltDB) openBucket(path []string) error {
-	// Find the BoltBucket with a path == path
+func (bd *KeyValueDB) openBucket(path []string) error {
+	// Find the Bucket with a path == path
 	b, err := bd.getBucketFromPath(path)
 	if err == nil {
 		b.expanded = true
@@ -237,7 +237,7 @@ func (bd *BoltDB) openBucket(path []string) error {
 	return err
 }
 
-func (bd *BoltDB) getBucket(k string) (*BoltBucket, error) {
+func (bd *KeyValueDB) getBucket(k string) (*Bucket, error) {
 	for i := range bd.buckets {
 		if bd.buckets[i].name == k {
 			return &bd.buckets[i], nil
@@ -246,14 +246,14 @@ func (bd *BoltDB) getBucket(k string) (*BoltBucket, error) {
 	return nil, errors.New("Bucket Not Found")
 }
 
-func (bd *BoltDB) openAllBuckets() {
+func (bd *KeyValueDB) openAllBuckets() {
 	for i := range bd.buckets {
 		bd.buckets[i].openAllBuckets()
 		bd.buckets[i].expanded = true
 	}
 }
 
-func (bd *BoltDB) syncOpenBuckets(shadow *BoltDB) {
+func (bd *KeyValueDB) syncOpenBuckets(shadow *KeyValueDB) {
 	// First test this bucket
 	for i := range bd.buckets {
 		for j := range shadow.buckets {
@@ -264,9 +264,9 @@ func (bd *BoltDB) syncOpenBuckets(shadow *BoltDB) {
 	}
 }
 
-func (bd *BoltDB) refreshDatabase() *BoltDB {
-	// Reload the database into memBolt
-	memBolt = new(BoltDB)
+func (bd *KeyValueDB) refreshDatabase() *KeyValueDB {
+	// Reload the database into memDB
+	memDB = new(KeyValueDB)
 	kvdb.View(db, func(tx kvdb.RTx) error {
 		return tx.ForEachBucket(func(key []byte) error {
 			b := tx.ReadBucket(key)
@@ -274,19 +274,19 @@ func (bd *BoltDB) refreshDatabase() *BoltDB {
 			if err == nil {
 				bb.name = string(key)
 				bb.expanded = false
-				memBolt.buckets = append(memBolt.buckets, *bb)
+				memDB.buckets = append(memDB.buckets, *bb)
 				return nil
 			}
 			return err
 		})
 	}, func() {})
-	return memBolt
+	return memDB
 }
 
 /*
-GetPath returns the database path leading to this BoltBucket
+GetPath returns the database path leading to this Bucket
 */
-func (b *BoltBucket) GetPath() []string {
+func (b *Bucket) GetPath() []string {
 	if b.parent != nil {
 		return append(b.parent.GetPath(), b.name)
 	}
@@ -297,7 +297,7 @@ func (b *BoltBucket) GetPath() []string {
 buildVisiblePathSlice builds a slice of string slices containing all visible paths in this bucket
 The passed prefix is the path leading to the current bucket
 */
-func (b *BoltBucket) buildVisiblePathSlice(prefix []string, filter string) ([][]string, error) {
+func (b *Bucket) buildVisiblePathSlice(prefix []string, filter string) ([][]string, error) {
 	var retSlice [][]string
 	var retErr error
 	retSlice = append(retSlice, append(prefix, b.name))
@@ -321,7 +321,7 @@ func (b *BoltBucket) buildVisiblePathSlice(prefix []string, filter string) ([][]
 	return retSlice, retErr
 }
 
-func (b *BoltBucket) syncOpenBuckets(shadow *BoltBucket) {
+func (b *Bucket) syncOpenBuckets(shadow *Bucket) {
 	// First test this bucket
 	b.expanded = shadow.expanded
 	for i := range b.buckets {
@@ -333,14 +333,14 @@ func (b *BoltBucket) syncOpenBuckets(shadow *BoltBucket) {
 	}
 }
 
-func (b *BoltBucket) openAllBuckets() {
+func (b *Bucket) openAllBuckets() {
 	for i := range b.buckets {
 		b.buckets[i].openAllBuckets()
 		b.buckets[i].expanded = true
 	}
 }
 
-func (b *BoltBucket) getBucket(k string) (*BoltBucket, error) {
+func (b *Bucket) getBucket(k string) (*Bucket, error) {
 	for i := range b.buckets {
 		if b.buckets[i].name == k {
 			return &b.buckets[i], nil
@@ -349,7 +349,7 @@ func (b *BoltBucket) getBucket(k string) (*BoltBucket, error) {
 	return nil, errors.New("Bucket Not Found")
 }
 
-func (b *BoltBucket) getPair(k string) (*BoltPair, error) {
+func (b *Bucket) getPair(k string) (*KeyValue, error) {
 	for i := range b.pairs {
 		if b.pairs[i].key == k {
 			return &b.pairs[i], nil
@@ -359,9 +359,9 @@ func (b *BoltBucket) getPair(k string) (*BoltPair, error) {
 }
 
 /*
-GetPath Returns the path of the BoltPair
+GetPath Returns the path of the KeyValue
 */
-func (p *BoltPair) GetPath() []string {
+func (p *KeyValue) GetPath() []string {
 	return append(p.parent.GetPath(), p.key)
 }
 
@@ -372,7 +372,7 @@ func (p *BoltPair) GetPath() []string {
  * Mainly used for moving a bucket from one path to another
  * as in the 'renameBucket' function below.
  */
-func addBucketFromBoltBucket(path []string, bb *BoltBucket) error {
+func addBucketFromBucket(path []string, bb *Bucket) error {
 	if err := insertBucket(path, bb.name); err == nil {
 		bucketPath := append(path, bb.name)
 		for i := range bb.pairs {
@@ -381,7 +381,7 @@ func addBucketFromBoltBucket(path []string, bb *BoltBucket) error {
 			}
 		}
 		for i := range bb.buckets {
-			if err = addBucketFromBoltBucket(bucketPath, &bb.buckets[i]); err != nil {
+			if err = addBucketFromBucket(bucketPath, &bb.buckets[i]); err != nil {
 				return err
 			}
 		}
@@ -427,8 +427,8 @@ func deleteKey(path []string) error {
 	return err
 }
 
-func readBucket(b kvdb.RBucket) (*BoltBucket, error) {
-	bb := new(BoltBucket)
+func readBucket(b kvdb.RBucket) (*Bucket, error) {
+	bb := new(Bucket)
 	b.ForEach(func(k, v []byte) error {
 		if v == nil {
 			tb, err := readBucket(b.NestedReadBucket(k))
@@ -438,7 +438,7 @@ func readBucket(b kvdb.RBucket) (*BoltBucket, error) {
 				bb.buckets = append(bb.buckets, *tb)
 			}
 		} else {
-			tp := BoltPair{key: string(k), val: string(v)}
+			tp := KeyValue{key: string(k), val: string(v)}
 			tp.parent = bb
 			bb.pairs = append(bb.pairs, tp)
 		}
@@ -452,7 +452,7 @@ func renameBucket(path []string, name string) error {
 		// No change requested
 		return nil
 	}
-	var bb *BoltBucket // For caching the current bucket
+	var bb *Bucket // For caching the current bucket
 	err := kvdb.View(db, func(tx kvdb.RTx) error {
 		// len(b.path)-1 is the key we need to delete,
 		// the rest are buckets leading to that key
@@ -493,7 +493,7 @@ func renameBucket(path []string, name string) error {
 	// And re-add it
 
 	parentPath := path[:len(path)-1]
-	if err = addBucketFromBoltBucket(parentPath, bb); err != nil {
+	if err = addBucketFromBucket(parentPath, bb); err != nil {
 		return err
 	}
 	return nil

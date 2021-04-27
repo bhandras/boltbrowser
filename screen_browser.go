@@ -25,7 +25,7 @@ type ViewPort struct {
 BrowserScreen holds all that's going on :D
 */
 type BrowserScreen struct {
-	db             *BoltDB
+	db             *KeyValueDB
 	leftViewPort   ViewPort
 	rightViewPort  ViewPort
 	queuedCommand  string
@@ -543,7 +543,7 @@ func (screen *BrowserScreen) drawHeader(style Style) {
 		headerFileName = filepath.Base(headerFileName)
 	}
 	headerString := ProgramName + ": " + headerFileName
-	count := ((width-len(headerString))/2)+1
+	count := ((width - len(headerString)) / 2) + 1
 	if count < 0 {
 		count = 0
 	}
@@ -689,7 +689,7 @@ func formatValueJSON(val []byte) ([]byte, error) {
 	return out, nil
 }
 
-func (screen *BrowserScreen) bucketToLines(bkt *BoltBucket, style Style) []Line {
+func (screen *BrowserScreen) bucketToLines(bkt *Bucket, style Style) []Line {
 	var ret []Line
 	bfg, bbg := style.defaultFg, style.defaultBg
 	if comparePaths(screen.currentPath, bkt.GetPath()) {

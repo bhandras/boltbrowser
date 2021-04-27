@@ -12,12 +12,12 @@ import (
 	"github.com/nsf/termbox-go"
 )
 
-var ProgramName = "boltbrowser"
+var ProgramName = "kvdb-browser"
 var VersionNum = 2.0
 
 var databaseFiles []string
 var db kvdb.Backend
-var memBolt *BoltDB
+var memDB *KeyValueDB
 
 var currentFilename string
 
@@ -137,14 +137,14 @@ func main() {
 		}
 
 		// First things first, load the database into memory
-		memBolt.refreshDatabase()
+		memDB.refreshDatabase()
 		if AppArgs.ReadOnly {
 			// If we're opening it in readonly mode, close it now
 			db.Close()
 		}
 
 		// Kick off the UI loop
-		mainLoop(memBolt, style)
+		mainLoop(memDB, style)
 		defer db.Close()
 	}
 }
